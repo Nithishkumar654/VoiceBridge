@@ -95,7 +95,7 @@ function ControlPanel({
                             onChange={(e) => onSourceLanguageChange(e.target.value)}
                             className="w-full pl-10 pr-3 py-3 bg-white/10 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-all duration-200"
                         >
-                            <option value="auto" className="bg-gray-800 text-white">Auto Detect</option>
+                            {/* <option value="auto" className="bg-gray-800 text-white">Auto Detect</option> */}
                             {Object.entries(supportedLanguages).map(([code, name]) => (
                                 <option key={code} value={code} className="bg-gray-800 text-white">
                                     {name}

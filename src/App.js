@@ -1,19 +1,31 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MicOff, Sparkles } from 'lucide-react';
 import ControlPanel from './components/ControlPanel';
 import TranscriptDisplay from './components/TranscriptDisplay';
 import SettingsModal from './components/SettingsModal';
-import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useTranslation } from './hooks/useTranslation';
 
+function enhanceTranscription(text) {
+    if (!text) return '';
+
+    let enhanced = text.trim();
+    enhanced = enhanced.charAt(0).toUpperCase() + enhanced.slice(1);
+    const lastChar = enhanced.charAt(enhanced.length - 1);
+    if (!['.', '!', '?'].includes(lastChar)) {
+        enhanced += '.';
+    }
+    enhanced = enhanced.replace(/\buh\b/gi, '').replace(/\bum\b/gi, '');
+    enhanced = enhanced.replace(/,([^ ])/g, ', $1');
+    return enhanced;
+}
+
 function App() {
-    const [sourceLanguage, setSourceLanguage] = useState('auto');
-    const [targetLanguage, setTargetLanguage] = useState('en');
+    const [sourceLanguage, setSourceLanguage] = useState('en');
+    const [targetLanguage, setTargetLanguage] = useState('hi');
     const [transcript, setTranscript] = useState('');
     const [transliteratedText, setTransliteratedText] = useState('');
     const [translatedText, setTranslatedText] = useState('');
     const [detectedLanguage, setDetectedLanguage] = useState('');
-    // const [isMuted, setIsMuted] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [settings, setSettings] = useState({
         autoStart: false,
@@ -24,87 +36,137 @@ function App() {
         enableTransliteration: true
     });
 
-    const { startListening, stopListening, isListening, isSupported } = useSpeechRecognition({
-        onResult: handleSpeechResult,
-        onError: handleSpeechError,
-        continuous: settings.continuous,
-        interimResults: settings.interimResults
-    });
+    const recognitionRef = useRef(null);
+    const lastResultTimeRef = useRef(Date.now());
+    const silenceWatchdogTimeout = useRef(null);
+    const shouldKeepListeningRef = useRef(false);
 
     const { translateWithTransliteration, isTranslating } = useTranslation();
 
-    function handleSpeechResult(result) {
-        console.log(result);
-        if (result.isFinal) {
-            const newTranscript = result.transcript;
-            setTranscript(prev => prev + ' ' + newTranscript);
-            processSpeechWithTransliteration(newTranscript);
+    const [isListening, setIsListening] = useState(false);
+
+    const createRecognitionInstance = useCallback(() => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            console.error('SpeechRecognition not supported');
+            return null;
         }
+        const recognition = new SpeechRecognition();
+        recognition.continuous = settings.continuous;
+        recognition.interimResults = settings.interimResults;
+        recognition.lang = sourceLanguage;
+
+        recognition.onstart = () => {
+            console.log('Speech recognition started');
+            setIsListening(true);
+        };
+
+        recognition.onresult = async (event) => {
+            lastResultTimeRef.current = Date.now();
+            resetSilenceWatchdog();
+
+            let interim = '';
+            let final = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                if (result.isFinal) {
+                    final += result[0].transcript + ' ';
+                } else {
+                    interim += result[0].transcript + ' ';
+                }
+            }
+
+            if (final) {
+                const enhancedFinal = enhanceTranscription(final);
+                setTranscript(prev => prev + ' ' + enhancedFinal);
+                try {
+                    const finalResult = await translateWithTransliteration(enhancedFinal, sourceLanguage, targetLanguage);
+                    if (settings.enableTransliteration) {
+                        setTransliteratedText(prev => prev + ' ' + finalResult.transliterated);
+                    } else {
+                        setTransliteratedText('');
+                    }
+                    setTranslatedText(prev => (prev + ' ' + finalResult.translated).trim());
+                } catch (e) {
+                    console.error('Translation error on final result:', e);
+                }
+            }
+
+            if (interim) {
+                const enhancedInterim = enhanceTranscription(interim);
+                setTranslatedText('');
+                try {
+                    const interimResult = await translateWithTransliteration(enhancedInterim, sourceLanguage, targetLanguage);
+                    setTranslatedText(interimResult.translated);
+                } catch (e) {
+                    console.error('Translation error on interim result:', e);
+                }
+            }
+        };
+
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+        };
+
+        recognition.onend = () => {
+            setIsListening(false);
+            console.log('Speech recognition ended');
+            if (shouldKeepListeningRef.current && !isListening) {
+                setTimeout(() => {
+                    try {
+                        recognition.start();
+                    } catch (err) {
+                        console.error('Error restarting recognition:', err);
+                    }
+                }, 100);
+            }
+        };
+
+        return recognition;
+    }, [sourceLanguage, targetLanguage, settings.continuous, settings.interimResults, settings.enableTransliteration, translateWithTransliteration, isListening]);
+
+    function resetSilenceWatchdog() {
+        if (silenceWatchdogTimeout.current) clearTimeout(silenceWatchdogTimeout.current);
+        silenceWatchdogTimeout.current = setTimeout(() => {
+            const elapsed = Date.now() - lastResultTimeRef.current;
+            if (recognitionRef.current && elapsed > 3000 && shouldKeepListeningRef.current && !isListening) {
+                console.log('Silence detected, restarting recognition');
+                recognitionRef.current.stop();
+                setTimeout(() => recognitionRef.current.start(), 200);
+            }
+        }, 3500);
     }
 
-    function handleSpeechError(error) {
-        console.error('Speech recognition error:', error);
-    }
-
-    async function processSpeechWithTransliteration(text) {
+    function startListening() {
+        if (!recognitionRef.current) {
+            recognitionRef.current = createRecognitionInstance();
+        }
+        if (isListening) return; // Prevent double start
+        shouldKeepListeningRef.current = true;
         try {
-            let actualSourceLanguage = sourceLanguage;
-
-            if (sourceLanguage === 'auto') {
-                const detected = detectLanguage(text);
-                actualSourceLanguage = detected;
-                setDetectedLanguage(detected);
-            } else {
-                setDetectedLanguage(sourceLanguage);
-            }
-
-            const result = await translateWithTransliteration(
-                text,
-                actualSourceLanguage,
-                targetLanguage
-            );
-
-            if (settings.enableTransliteration) {
-                setTransliteratedText(prev => prev + ' ' + result.transliterated);
-            }
-
-            setTranslatedText(prev => prev + ' ' + result.translated);
+            recognitionRef.current.start();
+            // Recognition events update isListening state
         } catch (error) {
-            console.error('Translation error:', error);
+            console.error('Failed to start recognition:', error);
         }
     }
 
-    function detectLanguage(text) {
-        const lowerText = text.toLowerCase();
-
-        if (/[а-я]/.test(lowerText)) return 'ru';
-        if (/[ñáéíóúü]/.test(lowerText)) return 'es';
-        if (/[àâäéèêëïîôöùûüÿç]/.test(lowerText)) return 'fr';
-        if (/[äöüß]/.test(lowerText)) return 'de';
-        if (/[àèéìíîòóù]/.test(lowerText)) return 'it';
-        if (/[ãâáàçéêíóôõú]/.test(lowerText)) return 'pt';
-        if (/[ąćęłńóśźż]/.test(lowerText)) return 'pl';
-        if (/[åäö]/.test(lowerText)) return 'sv';
-        if (/[æøå]/.test(lowerText)) return 'da';
-        if (/[åæø]/.test(lowerText)) return 'no';
-        if (/[áéíóúýðþæö]/.test(lowerText)) return 'is';
-        if (/[áéíóöőúüű]/.test(lowerText)) return 'hu';
-        if (/[áčďéěíňóřšťúůýž]/.test(lowerText)) return 'cs';
-        if (/[क-ह]/.test(lowerText)) return 'hi';
-        if (/[క-హ]/.test(lowerText)) return 'te';
-        if (/[அ-ஹ]/.test(lowerText)) return 'ta';
-        if (/[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(lowerText)) return 'ko';
-        if (/[一-龯]/.test(lowerText)) return 'zh';
-        if (/[ぁ-んァ-ン]/.test(lowerText)) return 'ja';
-        if (/[א-ת]/.test(lowerText)) return 'he';
-        if (/[ก-๙]/.test(lowerText)) return 'th';
-        if (/[ا-ي]/.test(lowerText)) return 'ar';
-
-        return 'en';
+    function stopListening() {
+        shouldKeepListeningRef.current = false;
+        if (recognitionRef.current && isListening) {
+            recognitionRef.current.stop();
+            // Recognition events update isListening state
+        }
+        if (silenceWatchdogTimeout.current) clearTimeout(silenceWatchdogTimeout.current);
     }
 
     function toggleListening() {
-        isListening ? stopListening() : startListening();
+        if (shouldKeepListeningRef.current) {
+            stopListening();
+        } else {
+            startListening();
+        }
     }
 
     function clearTranscript() {
@@ -114,29 +176,38 @@ function App() {
         setDetectedLanguage('');
     }
 
-    // function toggleMute() {
-    //     setIsMuted(prev => !prev);
-    // }
+    useEffect(() => {
+        if (settings.autoStart) {
+            startListening();
+        }
+        return () => {
+            stopListening();
+        };
+    }, [settings.autoStart, createRecognitionInstance]);
 
     function handleSourceLanguageChange(lang) {
         setSourceLanguage(lang);
         clearTranscript();
+        if (recognitionRef.current) {
+            recognitionRef.current.lang = lang;
+        }
     }
 
     function handleTargetLanguageChange(lang) {
         setTargetLanguage(lang);
         if (transcript.trim()) {
-            processSpeechWithTransliteration(transcript);
+            translateWithTransliteration(transcript, sourceLanguage, lang)
+                .then(result => {
+                    if (settings.enableTransliteration) {
+                        setTransliteratedText(result.transliterated);
+                    }
+                    setTranslatedText(result.translated);
+                })
+                .catch(console.error);
         }
     }
 
-    useEffect(() => {
-        if (settings.autoStart && isSupported) {
-            toggleListening();
-        }
-    }, []);
-
-    if (!isSupported) {
+    if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
         return (
             <div className="min-h-screen flex items-center justify-center p-4">
                 <div className="glass rounded-2xl p-8 max-w-md text-center">
@@ -176,8 +247,6 @@ function App() {
                             targetLanguage={targetLanguage}
                             onSourceLanguageChange={handleSourceLanguageChange}
                             onTargetLanguageChange={handleTargetLanguageChange}
-                            // isMuted={isMuted}
-                            // onToggleMute={toggleMute}
                             onClear={clearTranscript}
                             onSettings={() => setShowSettings(true)}
                             detectedLanguage={detectedLanguage}
