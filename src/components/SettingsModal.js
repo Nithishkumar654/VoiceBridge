@@ -217,7 +217,7 @@ function SettingsModal({ settings, onSettingsChange, onClose }) {
                                     <div className="text-sm text-gray-300 font-medium">Auto-clear old text</div>
                                 </div>
                                 <div className="text-xs text-gray-400">
-                                    Automatically remove text older than 5 minutes
+                                    Automatically remove older text
                                 </div>
                             </div>
                         </div>

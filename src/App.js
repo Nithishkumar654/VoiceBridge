@@ -101,15 +101,16 @@ function App() {
             setInterim(interimTranscript);
 
             if (finalTranscript.trim()) {
-                setTranscript((prev) => prev + finalTranscript + " ");
+                setTranscript((prev) => finalTranscript + " ");
                 try {
                     const finalResult = await translateWithTransliteration(
                         finalTranscript,
                         sourceLanguage,
                         targetLanguage
                     );
+                    const translatedWithPunct = addPunctuation(finalResult.translated, true);
                     setTranslatedText(
-                        (prev) => (prev + finalResult.translated + " ")
+                        (prev) => (translatedWithPunct + " ")
                     );
                     if (settings.enableTransliteration) {
                         setTransliteratedText(
