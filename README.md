@@ -4,6 +4,12 @@
 
 VoiceBridge is a powerful React application that provides real-time speech recognition, transliteration to Devanagari script, and translation capabilities. Perfect for online meetings, language learning, and cross-cultural communication.
 
+## 🌐 Live Demo
+
+Try VoiceBridge instantly without any setup:
+
+👉 **[https://voicebridge-omega.vercel.app/](https://voicebridge-omega.vercel.app/)**
+
 ## ✨ Features
 
 ### 🎤 **Speech Recognition**
