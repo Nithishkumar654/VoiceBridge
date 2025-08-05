@@ -5,19 +5,6 @@ import TranscriptDisplay from "./components/TranscriptDisplay";
 import SettingsModal from "./components/SettingsModal";
 import { useTranslation } from "./hooks/useTranslation";
 
-function enhanceTranscription(text) {
-    if (!text) return "";
-    let enhanced = text.trim();
-    enhanced = enhanced.charAt(0).toUpperCase() + enhanced.slice(1);
-    const lastChar = enhanced.charAt(enhanced.length - 1);
-    if (![".", "!", "?"].includes(lastChar)) {
-        enhanced += ".";
-    }
-    enhanced = enhanced.replace(/\buh\b/gi, "").replace(/\bum\b/gi, "");
-    enhanced = enhanced.replace(/,([^ ])/g, ", $1");
-    return enhanced;
-}
-
 function App() {
     const storedSourceLang = localStorage.getItem('sourceLanguage') || 'en';
     const storedTargetLang = localStorage.getItem('targetLanguage') || 'hi';
@@ -47,7 +34,32 @@ function App() {
     const { translateWithTransliteration, isTranslating } = useTranslation();
     const [isListening, setIsListening] = useState(false);
 
-    const interimTimeoutRef = useRef(null);
+    const latestInterimRef = useRef("");
+    const interimTranslateIntervalRef = useRef(null);
+
+    function addPunctuation(text, isFinal) {
+        if (!text) return "";
+
+        text = text.trim();
+
+        if (isFinal) {
+            // Add a full stop if not already present
+            if (!/[.!?]$/.test(text)) {
+                text += ". ";
+            } else if (!text.endsWith(" ")) {
+                text += " ";
+            }
+        } else {
+            // Add a comma if not already present
+            if (!text.endsWith(",") && !/[.!?]$/.test(text)) {
+                text += ", ";
+            } else if (!text.endsWith(" ")) {
+                text += " ";
+            }
+        }
+        return text;
+    }
+
 
     // --- Recognition Setup ---
     const createRecognitionInstance = useCallback(() => {
@@ -65,34 +77,39 @@ function App() {
 
         recognition.onstart = () => {
             setIsListening(true);
+            startInterimTranslationInterval();
         };
 
 
         recognition.onresult = async (event) => {
             let interimTranscript = "";
             let finalTranscript = "";
-            console.log(event);
+
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const result = event.results[i];
+
+                let transcript = result[0].transcript;
+                transcript = addPunctuation(transcript, result.isFinal);
+
                 if (result.isFinal) {
-                    finalTranscript += result[0].transcript + " ";
+                    finalTranscript += transcript + " ";
                 } else {
-                    interimTranscript += result[0].transcript + " ";
+                    interimTranscript += transcript + " ";
                 }
             }
+
             setInterim(interimTranscript);
 
             if (finalTranscript.trim()) {
-                const enhancedFinal = enhanceTranscription(finalTranscript);
-                setTranscript((prev) => prev + enhancedFinal + " ");
+                setTranscript((prev) => prev + finalTranscript + " ");
                 try {
                     const finalResult = await translateWithTransliteration(
-                        enhancedFinal,
+                        finalTranscript,
                         sourceLanguage,
                         targetLanguage
                     );
                     setTranslatedText(
-                        (prev) => (prev + finalResult.translated + " ").trim()
+                        (prev) => (prev + finalResult.translated + " ")
                     );
                     if (settings.enableTransliteration) {
                         setTransliteratedText(
@@ -106,22 +123,36 @@ function App() {
                 }
             }
 
-            if (interimTranscript.trim()) {
-                if (interimTimeoutRef.current) clearTimeout(interimTimeoutRef.current);
-                interimTimeoutRef.current = setTimeout(async () => {
+            latestInterimRef.current = interimTranscript.trim();
+        };
+
+        function startInterimTranslationInterval() {
+            if (interimTranslateIntervalRef.current) clearInterval(interimTranslateIntervalRef.current);
+            interimTranslateIntervalRef.current = setInterval(async () => {
+                const text = latestInterimRef.current;
+                if (text.length > 0) {
                     try {
-                        const interimResult = await translateWithTransliteration(
-                            interimTranscript,
+                        const result = await translateWithTransliteration(
+                            text,
                             sourceLanguage,
                             targetLanguage
                         );
-                        setTranslatedText(interimResult.translated);
+                        setTranslatedText(result.translated);
                     } catch {
-                        // ignore
+                        // ignore errors
                     }
-                }, 1000); // 1 second debounce
+                }
+            }, 2000); // every 1 second
+        }
+
+        // Call this when recognition stops to cancel interval
+        function stopInterimTranslationInterval() {
+            if (interimTranslateIntervalRef.current) {
+                clearInterval(interimTranslateIntervalRef.current);
+                interimTranslateIntervalRef.current = null;
             }
-        };
+            setTranslatedText(""); // optional reset on stop
+        }
 
         recognition.onerror = (event) => {
             console.error("Recognition error:", event.error);
@@ -129,6 +160,7 @@ function App() {
 
         recognition.onend = () => {
             setIsListening(false);
+            stopInterimTranslationInterval();
             if (shouldKeepListeningRef.current) {
                 setTimeout(() => {
                     try {
