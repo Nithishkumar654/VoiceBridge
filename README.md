@@ -10,6 +10,12 @@ Try VoiceBridge instantly without any setup:
 
 👉 **[https://voicebridge-omega.vercel.app/](https://voicebridge-omega.vercel.app/)**
 
+🎥 **Watch the Demo Video**
+
+<video src="Screen%20Recording%202025-08-05%20193408.mp4" controls width="100%" style="max-width: 720px;">
+  Your browser does not support the video tag. [Click here to download the demo video](Screen%20Recording%202025-08-05%20193408.mp4).
+</video>
+
 ## ✨ Features
 
 ### 🎤 **Speech Recognition**
