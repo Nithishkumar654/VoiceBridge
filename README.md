@@ -12,9 +12,8 @@ Try VoiceBridge instantly without any setup:
 
 🎥 **Watch the Demo Video**
 
-<video src="Screen Recording 2025-08-05 193408.mp4" controls width="100%" style="max-width: 720px;">
-  Your browser does not support the video tag. [Click here to download the demo video](Screen%20Recording%202025-08-05%20193408.mp4).
-</video>
+https://github.com/user-attachments/assets/09e4d94d-5276-4b5b-a9de-395951f67ed8
+
 
 ## ✨ Features
 
