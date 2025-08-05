@@ -12,7 +12,7 @@ Try VoiceBridge instantly without any setup:
 
 🎥 **Watch the Demo Video**
 
-<video src="Screen 20Recording 2025-08-05 193408.mp4" controls width="100%" style="max-width: 720px;">
+<video src="Screen Recording 2025-08-05 193408.mp4" controls width="100%" style="max-width: 720px;">
   Your browser does not support the video tag. [Click here to download the demo video](Screen%20Recording%202025-08-05%20193408.mp4).
 </video>
 
