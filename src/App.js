@@ -1,210 +1,199 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MicOff, Sparkles } from 'lucide-react';
-import ControlPanel from './components/ControlPanel';
-import TranscriptDisplay from './components/TranscriptDisplay';
-import SettingsModal from './components/SettingsModal';
-import { useTranslation } from './hooks/useTranslation';
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { MicOff, Sparkles } from "lucide-react";
+import ControlPanel from "./components/ControlPanel";
+import TranscriptDisplay from "./components/TranscriptDisplay";
+import SettingsModal from "./components/SettingsModal";
+import { useTranslation } from "./hooks/useTranslation";
 
 function enhanceTranscription(text) {
-    if (!text) return '';
-
+    if (!text) return "";
     let enhanced = text.trim();
     enhanced = enhanced.charAt(0).toUpperCase() + enhanced.slice(1);
     const lastChar = enhanced.charAt(enhanced.length - 1);
-    if (!['.', '!', '?'].includes(lastChar)) {
-        enhanced += '.';
+    if (![".", "!", "?"].includes(lastChar)) {
+        enhanced += ".";
     }
-    enhanced = enhanced.replace(/\buh\b/gi, '').replace(/\bum\b/gi, '');
-    enhanced = enhanced.replace(/,([^ ])/g, ', $1');
+    enhanced = enhanced.replace(/\buh\b/gi, "").replace(/\bum\b/gi, "");
+    enhanced = enhanced.replace(/,([^ ])/g, ", $1");
     return enhanced;
 }
 
 function App() {
-    const [sourceLanguage, setSourceLanguage] = useState('en');
-    const [targetLanguage, setTargetLanguage] = useState('hi');
-    const [transcript, setTranscript] = useState('');
-    const [transliteratedText, setTransliteratedText] = useState('');
-    const [translatedText, setTranslatedText] = useState('');
-    const [detectedLanguage, setDetectedLanguage] = useState('');
+    const storedSourceLang = localStorage.getItem('sourceLanguage') || 'en';
+    const storedTargetLang = localStorage.getItem('targetLanguage') || 'hi';
+
+    const [sourceLanguage, setSourceLanguage] = useState(storedSourceLang);
+    const [targetLanguage, setTargetLanguage] = useState(storedTargetLang);
+
+    const [transcript, setTranscript] = useState("");
+    const [interim, setInterim] = useState("");
+    const [transliteratedText, setTransliteratedText] = useState("");
+    const [translatedText, setTranslatedText] = useState("");
+    const [detectedLanguage, setDetectedLanguage] = useState("");
     const [showSettings, setShowSettings] = useState(false);
+
     const [settings, setSettings] = useState({
         autoStart: false,
         continuous: true,
         interimResults: true,
         confidence: 0.7,
-        translationService: 'mymemory',
-        enableTransliteration: true
+        translationService: "mymemory",
+        enableTransliteration: true,
     });
 
     const recognitionRef = useRef(null);
-    const lastResultTimeRef = useRef(Date.now());
-    const silenceWatchdogTimeout = useRef(null);
     const shouldKeepListeningRef = useRef(false);
 
     const { translateWithTransliteration, isTranslating } = useTranslation();
-
     const [isListening, setIsListening] = useState(false);
 
+    const interimTimeoutRef = useRef(null);
+
+    // --- Recognition Setup ---
     const createRecognitionInstance = useCallback(() => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const SpeechRecognition =
+            window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            console.error('SpeechRecognition not supported');
+            console.error("SpeechRecognition is not supported on this browser.");
             return null;
         }
+
         const recognition = new SpeechRecognition();
         recognition.continuous = settings.continuous;
         recognition.interimResults = settings.interimResults;
         recognition.lang = sourceLanguage;
 
         recognition.onstart = () => {
-            console.log('Speech recognition started');
             setIsListening(true);
         };
 
+
         recognition.onresult = async (event) => {
-            lastResultTimeRef.current = Date.now();
-            resetSilenceWatchdog();
-
-            let interim = '';
-            let final = '';
-
+            let interimTranscript = "";
+            let finalTranscript = "";
+            console.log(event);
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const result = event.results[i];
                 if (result.isFinal) {
-                    final += result[0].transcript + ' ';
+                    finalTranscript += result[0].transcript + " ";
                 } else {
-                    interim += result[0].transcript + ' ';
+                    interimTranscript += result[0].transcript + " ";
                 }
             }
+            setInterim(interimTranscript);
 
-            if (final) {
-                const enhancedFinal = enhanceTranscription(final);
-                setTranscript(prev => prev + ' ' + enhancedFinal);
+            if (finalTranscript.trim()) {
+                const enhancedFinal = enhanceTranscription(finalTranscript);
+                setTranscript((prev) => prev + enhancedFinal + " ");
                 try {
-                    const finalResult = await translateWithTransliteration(enhancedFinal, sourceLanguage, targetLanguage);
+                    const finalResult = await translateWithTransliteration(
+                        enhancedFinal,
+                        sourceLanguage,
+                        targetLanguage
+                    );
+                    setTranslatedText(
+                        (prev) => (prev + finalResult.translated + " ").trim()
+                    );
                     if (settings.enableTransliteration) {
-                        setTransliteratedText(prev => prev + ' ' + finalResult.transliterated);
+                        setTransliteratedText(
+                            (prev) => prev + finalResult.transliterated + " "
+                        );
                     } else {
-                        setTransliteratedText('');
+                        setTransliteratedText("");
                     }
-                    setTranslatedText(prev => (prev + ' ' + finalResult.translated).trim());
-                } catch (e) {
-                    console.error('Translation error on final result:', e);
+                } catch (error) {
+                    console.error("Translation error on final:", error);
                 }
             }
 
-            if (interim) {
-                const enhancedInterim = enhanceTranscription(interim);
-                setTranslatedText('');
-                try {
-                    const interimResult = await translateWithTransliteration(enhancedInterim, sourceLanguage, targetLanguage);
-                    setTranslatedText(interimResult.translated);
-                } catch (e) {
-                    console.error('Translation error on interim result:', e);
-                }
+            if (interimTranscript.trim()) {
+                if (interimTimeoutRef.current) clearTimeout(interimTimeoutRef.current);
+                interimTimeoutRef.current = setTimeout(async () => {
+                    try {
+                        const interimResult = await translateWithTransliteration(
+                            interimTranscript,
+                            sourceLanguage,
+                            targetLanguage
+                        );
+                        setTranslatedText(interimResult.translated);
+                    } catch {
+                        // ignore
+                    }
+                }, 1000); // 1 second debounce
             }
         };
 
         recognition.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
+            console.error("Recognition error:", event.error);
         };
 
         recognition.onend = () => {
             setIsListening(false);
-            console.log('Speech recognition ended');
-            if (shouldKeepListeningRef.current && !isListening) {
+            if (shouldKeepListeningRef.current) {
                 setTimeout(() => {
                     try {
                         recognition.start();
-                    } catch (err) {
-                        console.error('Error restarting recognition:', err);
-                    }
+                    } catch { }
                 }, 100);
             }
         };
 
         return recognition;
-    }, [sourceLanguage, targetLanguage, settings.continuous, settings.interimResults, settings.enableTransliteration, translateWithTransliteration, isListening]);
-
-    function resetSilenceWatchdog() {
-        if (silenceWatchdogTimeout.current) clearTimeout(silenceWatchdogTimeout.current);
-        silenceWatchdogTimeout.current = setTimeout(() => {
-            const elapsed = Date.now() - lastResultTimeRef.current;
-            if (recognitionRef.current && elapsed > 3000 && shouldKeepListeningRef.current && !isListening) {
-                console.log('Silence detected, restarting recognition');
-                recognitionRef.current.stop();
-                setTimeout(() => recognitionRef.current.start(), 200);
-            }
-        }, 3500);
-    }
+    }, [
+        settings.continuous,
+        settings.interimResults,
+        settings.enableTransliteration,
+        sourceLanguage,
+        targetLanguage,
+        translateWithTransliteration,
+    ]);
 
     function startListening() {
-        if (!recognitionRef.current) {
-            recognitionRef.current = createRecognitionInstance();
-        }
-        if (isListening) return; // Prevent double start
+        if (!recognitionRef.current) recognitionRef.current = createRecognitionInstance();
+        if (isListening) return;
         shouldKeepListeningRef.current = true;
         try {
             recognitionRef.current.start();
-            // Recognition events update isListening state
         } catch (error) {
-            console.error('Failed to start recognition:', error);
+            console.error("Failed to start recognition:", error);
         }
     }
 
     function stopListening() {
         shouldKeepListeningRef.current = false;
-        if (recognitionRef.current && isListening) {
+        if (recognitionRef.current) {
             recognitionRef.current.stop();
-            // Recognition events update isListening state
         }
-        if (silenceWatchdogTimeout.current) clearTimeout(silenceWatchdogTimeout.current);
     }
 
     function toggleListening() {
-        if (shouldKeepListeningRef.current) {
-            stopListening();
-        } else {
-            startListening();
-        }
+        if (isListening) stopListening();
+        else startListening();
     }
 
     function clearTranscript() {
-        setTranscript('');
-        setTransliteratedText('');
-        setTranslatedText('');
-        setDetectedLanguage('');
+        setTranscript("");
+        setInterim("");
+        setTransliteratedText("");
+        setTranslatedText("");
+        setDetectedLanguage("");
     }
 
     useEffect(() => {
-        if (settings.autoStart) {
-            startListening();
-        }
-        return () => {
-            stopListening();
-        };
-    }, [settings.autoStart, createRecognitionInstance]);
+        if (settings.autoStart) startListening();
+        return () => stopListening();
+        // Don't add createRecognitionInstance to deps, it will cause unwanted resets
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [settings.autoStart]);
 
     function handleSourceLanguageChange(lang) {
-        setSourceLanguage(lang);
-        clearTranscript();
-        if (recognitionRef.current) {
-            recognitionRef.current.lang = lang;
-        }
+        localStorage.setItem('sourceLanguage', lang);
+        window.location.reload();
     }
 
     function handleTargetLanguageChange(lang) {
-        setTargetLanguage(lang);
-        if (transcript.trim()) {
-            translateWithTransliteration(transcript, sourceLanguage, lang)
-                .then(result => {
-                    if (settings.enableTransliteration) {
-                        setTransliteratedText(result.transliterated);
-                    }
-                    setTranslatedText(result.translated);
-                })
-                .catch(console.error);
-        }
+        localStorage.setItem('targetLanguage', lang);
+        window.location.reload();
     }
 
     if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
@@ -216,7 +205,8 @@ function App() {
                     </div>
                     <h2 className="text-xl font-semibold text-white mb-2">Speech Recognition Not Supported</h2>
                     <p className="text-gray-300">
-                        Your browser doesn't support speech recognition. Please use Chrome, Edge, or Safari.
+                        Your browser doesn't support speech recognition. Please use Chrome,
+                        Edge, or Safari.
                     </p>
                 </div>
             </div>
@@ -234,7 +224,7 @@ function App() {
                         <h1 className="text-white">VoiceBridge</h1>
                     </div>
                     <p className="text-gray-300 text-lg">
-                        Real-time transliteration and translation for seamless online meetings
+                        Real-time transliteration and translation for seamless meetings
                     </p>
                 </header>
 
@@ -258,6 +248,7 @@ function App() {
                     <div className="lg:col-span-2">
                         <TranscriptDisplay
                             transcript={transcript}
+                            interim={interim}
                             transliteratedText={transliteratedText}
                             translatedText={translatedText}
                             detectedLanguage={detectedLanguage}
