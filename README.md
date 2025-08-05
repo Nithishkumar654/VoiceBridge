@@ -12,7 +12,8 @@ Try VoiceBridge instantly without any setup:
 
 🎥 **Watch the Demo Video**
 
-https://github.com/user-attachments/assets/09e4d94d-5276-4b5b-a9de-395951f67ed8
+
+https://github.com/user-attachments/assets/4ac46fd6-d168-44d6-9bf2-3ea13696b480
 
 
 ## ✨ Features
